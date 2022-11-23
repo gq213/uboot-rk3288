@@ -41,3 +41,16 @@ Number  Start (sector)    End (sector)  Size       Code  Name
    2          788480        62333918   29.3 GiB    8300  Linux filesystem
 
 rootfs放到第1分区，分区名称必须是"new_rootfs"；kernel和dtb放到第2分区。
+
+
+注意：
+
+如果板子emmc之前烧录过固件，上电之后不会从Micro SD卡启动，需要先擦除emmc里面的引导。
+
+1、可以正常进入之前的系统，然后执行
+
+dd if=/dev/zero of=/dev/mmcblkX bs=512 seek=64 count=7104
+
+2、使用RKDevTool.exe擦除
+
+起始扇区：0x40；扇区数：0x1bc0
