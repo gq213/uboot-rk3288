@@ -14,8 +14,9 @@
 static int setup_led(void)
 {
 #ifdef CONFIG_SPL_LED
+#ifndef CONFIG_TPL_BUILD
 	struct udevice *dev;
-	char *led_name;
+	const char *led_name;
 	int ret;
 
 	led_name = ofnode_conf_read_str("u-boot,boot-led");
@@ -29,6 +30,7 @@ static int setup_led(void)
 	ret = led_set_state(dev, LEDST_ON);
 	if (ret)
 		return ret;
+#endif
 #endif
 
 	return 0;

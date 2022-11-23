@@ -1,0 +1,924 @@
+
+u-boot-rockchip.bin
+=idbloader.img+u-boot.img
+binman，参考tools/binman/binman.rst和arch/arm/dts/rockchip-u-boot.dtsi
+
+idbloader.img
+=tpl/u-boot-tpl.bin+spl/u-boot-spl.bin
+binman，参考tools/binman/entries.rst和arch/arm/dts/rockchip-u-boot.dtsi
+
+u-boot.img
+27 05 19 56 98 00 E1 5B 63 6C 9E 2B
+cmd_u-boot.img := 
+./tools/mkimage -A arm -T firmware -C none -O u-boot -a 0x01000000 -e 0x01000000 -n "U-Boot 2022.10 for firefly-rk3288 board" -d u-boot.bin u-boot.img >/dev/null 
+
+u-boot-dtb.img
+27 05 19 56 D2 F1 C3 23 63 6C 9E 49
+cmd_u-boot-dtb.img := 
+./tools/mkimage -A arm -T firmware -C none -O u-boot -a 0x01000000 -e 0x01000000 -n "U-Boot 2022.10 for firefly-rk3288 board" -d u-boot.bin u-boot-dtb.img >/dev/null 
+
+./tools/mkimage每次执行生成的不完全相同
+
+u-boot.bin
+cmd_u-boot.bin := cp u-boot-dtb.bin u-boot.bin
+
+u-boot-dtb.bin
+cmd_u-boot-dtb.bin := cat u-boot-nodtb.bin dts/dt.dtb > u-boot-dtb.bin
+
+u-boot-nodtb.bin
+cmd_u-boot-nodtb.bin := /home/qiang/work/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-objcopy 
+--gap-fill=0xff  -j .text -j .secure_text -j .secure_data -j .rodata -j .hash -j .data -j .got -j .got.plt -j __u_boot_list 
+-j .rel.dyn -j .binman_sym_table -j .text_rest -j .dtb.init.rodata -j .efi_runtime -j .efi_runtime_rel 
+-O binary   u-boot u-boot-nodtb.bin
+
+u-boot.dtb=dts/dt.dtb
+
+dtb反编译dts
+dtc -I dtb -O dts spl/u-boot-spl.dtb -o spl/u-boot-spl.dts
+dtc -I dtb -O dts tpl/u-boot-tpl.dtb -o tpl/u-boot-tpl.dts
+
+u-boot.dtb
+spl/u-boot-spl.dtb
+tpl/u-boot-tpl.dtb
+
+https://blog.csdn.net/zhangkun_share/article/details/120738422
+
+(sector)
+0x0				mbr
+0x1				gpt
+0x40			idbloader.img
+0x1fc0~0x1fff	uboot env
+0x4000			u-boot.img
+
+----------------tpl-------------------------------------------------------
+tpl/spl编译选项差异
++CONFIG_TPL_BUILD
+
+1、arch/arm/cpu/armv7/start.S
+
+ENTRY(save_boot_params)
+	b	save_boot_params_ret		@ back to my caller
+ENDPROC(save_boot_params)
+	.weak	save_boot_params
+
+	.globl	reset
+	.globl	save_boot_params_ret
+	.type   save_boot_params_ret,%function
+reset:
+	/* Allow the board to save important registers */
+	b	save_boot_params
+save_boot_params_ret:
+	/*
+	 * disable interrupts (FIQ and IRQ), also set the cpu to SVC32 mode,
+	 * except if in HYP mode already
+	 */
+	mrs	r0, cpsr
+	and	r1, r0, #0x1f		@ mask mode bits
+	teq	r1, #0x1a		@ test for HYP mode
+	bicne	r0, r0, #0x1f		@ clear all mode bits
+	orrne	r0, r0, #0x13		@ set SVC mode
+	orr	r0, r0, #0xc0		@ disable FIQ and IRQ
+	msr	cpsr,r0
+	
+	bl	cpu_init_cp15
+	
+	bl	_main
+
+2、arch/arm/lib/crt0.S
+
+ENTRY(_main)
+	bl	board_init_f
+	
+	ldr	lr, =board_init_r	/* this is auto-relocated! */
+	bx	lr
+ENDPROC(_main)
+
+3、arch/arm/mach-rockchip/tpl.c
+void board_init_f(ulong dummy)
+{
+#if defined(CONFIG_DEBUG_UART) && defined(CONFIG_TPL_SERIAL)
+	/*
+	 * Debug UART can be used from here if required:
+	 *
+	 * debug_uart_init();
+	 * printch('a');
+	 * printhex8(0x1234);
+	 * printascii("string");
+	 */
+	debug_uart_init();
+#ifdef CONFIG_TPL_BANNER_PRINT
+	printascii("\nU-Boot TPL " PLAIN_VERSION " (" U_BOOT_DATE " - " \
+				U_BOOT_TIME ")\n");
+#endif
+#endif
+spl_early_init();
+	-->spl_common_init
+uclass_get_device(UCLASS_RAM, 0, &dev);
+	-->rk3288_dmc_probe
+}
+int board_return_to_bootrom(struct spl_image_info *spl_image,
+			    struct spl_boot_device *bootdev)
+{
+	back_to_bootrom(BROM_BOOT_NEXTSTAGE);
+
+	return 0;
+}
+u32 spl_boot_device(void)
+{
+	return BOOT_DEVICE_BOOTROM;
+}
+
+4、drivers/ram/rockchip/sdram_rk3288.c
+static int rk3288_dmc_probe(struct udevice *dev)
+{
+#if defined(CONFIG_TPL_BUILD) || \
+	(!defined(CONFIG_TPL) && defined(CONFIG_SPL_BUILD))
+	......
+	初始化ddr
+#endif
+}
+
+5、common/spl/spl.c
+void board_init_r(gd_t *dummy1, ulong dummy2)
+{
+spl_board_init();
+board_boot_order(spl_boot_list);
+
+ret = boot_from_devices(&spl_image, spl_boot_list,
+				ARRAY_SIZE(spl_boot_list));
+}
+__weak void board_boot_order(u32 *spl_boot_list)
+{
+	spl_boot_list[0] = spl_boot_device();
+}
+static int boot_from_devices(struct spl_image_info *spl_image,
+			     u32 spl_boot_list[], int count)
+{
+		struct spl_image_loader *loader;
+		int bootdev = spl_boot_list[i];
+		loader = spl_ll_find_loader(bootdev);
+		if (loader && !spl_load_image(spl_image, loader)) {
+			spl_image->boot_device = bootdev;
+			return 0;
+		}
+}
+static struct spl_image_loader *spl_ll_find_loader(uint boot_device)
+{
+if (boot_device == entry->boot_device)
+}
+static int spl_load_image(struct spl_image_info *spl_image,
+			  struct spl_image_loader *loader)
+{
+ret = loader->load_image(spl_image, &bootdev);
+}
+
+6、common/spl/spl_bootrom.c
+SPL_LOAD_IMAGE_METHOD("BOOTROM", 0, BOOT_DEVICE_BOOTROM, spl_return_to_bootrom);
+	-->return board_return_to_bootrom
+
+7、include/spl.h
+#define SPL_LOAD_IMAGE_METHOD(_name, _priority, _boot_device, _method) \
+	SPL_LOAD_IMAGE(_boot_device ## _priority ## _method) = { \
+		.name = _name, \
+		.boot_device = _boot_device, \
+		.load_image = _method, \
+	}
+
+8、arch/arm/mach-rockchip/bootrom.c
+void back_to_bootrom(enum rockchip_bootrom_cmd brom_cmd)
+{
+#if CONFIG_IS_ENABLED(LIBCOMMON_SUPPORT)
+	puts("Returning to boot ROM...\n");
+#endif
+	_back_to_bootrom(brom_cmd);
+}
+----------------spl-------------------------------------------------------
+1、2和tpl相同
+
+3、arch/arm/mach-rockchip/spl.c
+void board_init_f(ulong dummy)
+{
+spl_early_init();
+	-->spl_common_init
+
+arch_cpu_init();
+	-->configure_l2ctlr();
+
+ret = dram_init();
+preloader_console_init();
+}
+const char *board_spl_was_booted_from(void)
+{
+	u32  bootdevice_brom_id = readl(BROM_BOOTSOURCE_ID_ADDR);
+	const char *bootdevice_ofpath = NULL;
+
+	if (bootdevice_brom_id < ARRAY_SIZE(boot_devices))
+		bootdevice_ofpath = boot_devices[bootdevice_brom_id];
+
+	if (bootdevice_ofpath)
+		debug("%s: brom_bootdevice_id %x maps to '%s'\n",
+		      __func__, bootdevice_brom_id, bootdevice_ofpath);
+	else
+		debug("%s: failed to resolve brom_bootdevice_id %x\n",
+		      __func__, bootdevice_brom_id);
+
+	return bootdevice_ofpath;
+}
+u32 spl_boot_device(void)
+{
+	u32 boot_device = BOOT_DEVICE_MMC1;
+
+#if defined(CONFIG_TARGET_CHROMEBOOK_JERRY) || \
+		defined(CONFIG_TARGET_CHROMEBIT_MICKEY) || \
+		defined(CONFIG_TARGET_CHROMEBOOK_MINNIE) || \
+		defined(CONFIG_TARGET_CHROMEBOOK_SPEEDY) || \
+		defined(CONFIG_TARGET_CHROMEBOOK_BOB) || \
+		defined(CONFIG_TARGET_CHROMEBOOK_KEVIN)
+	return BOOT_DEVICE_SPI;
+#endif
+	if (CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM))
+		return BOOT_DEVICE_BOOTROM;
+
+	return boot_device;
+}
+u32 spl_mmc_boot_mode(struct mmc *mmc, const u32 boot_device)
+{
+	return MMCSD_MODE_RAW;
+}
+
+4、arch/arm/mach-rockchip/sdram.c
+int dram_init(void)
+{
+	struct ram_info ram;
+	struct udevice *dev;
+	int ret;
+
+	ret = uclass_get_device(UCLASS_RAM, 0, &dev);
+	if (ret) {
+		debug("DRAM init failed: %d\n", ret);
+		return ret;
+	}
+	ret = ram_get_info(dev, &ram);
+	if (ret) {
+		debug("Cannot get DRAM size: %d\n", ret);
+		return ret;
+	}
+	gd->ram_size = ram.size;
+	debug("SDRAM base=%lx, size=%lx\n",
+	      (unsigned long)ram.base, (unsigned long)ram.size);
+
+	return 0;
+}
+
+5、drivers/ram/rockchip/sdram_rk3288.c
+static int rk3288_dmc_probe(struct udevice *dev)
+{
+	priv->info.base = CONFIG_SYS_SDRAM_BASE;
+	priv->info.size = rockchip_sdram_size(
+			(phys_addr_t)&priv->pmu->sys_reg[2]);
+}
+
+6、common/spl/spl.c
+void board_init_r(gd_t *dummy1, ulong dummy2)
+{
+spl_board_init();
+	if (IS_ENABLED(CONFIG_SPL_OS_BOOT) || CONFIG_IS_ENABLED(HANDOFF) ||
+	    IS_ENABLED(CONFIG_SPL_ATF))
+		dram_init_banksize();
+board_boot_order(spl_boot_list);
+
+ret = boot_from_devices(&spl_image, spl_boot_list,
+				ARRAY_SIZE(spl_boot_list));
+switch (spl_image.os) {
+	case IH_OS_U_BOOT:
+		debug("Jumping to %s...\n", spl_phase_name(spl_next_phase()));
+		break;
+	
+	spl_board_prepare_for_boot();
+	jump_to_image_no_args(&spl_image);
+}
+static int boot_from_devices(struct spl_image_info *spl_image,
+			     u32 spl_boot_list[], int count)
+{
+		struct spl_image_loader *loader;
+		int bootdev = spl_boot_list[i];
+		loader = spl_ll_find_loader(bootdev);
+		if (loader && !spl_load_image(spl_image, loader)) {
+			spl_image->boot_device = bootdev;
+			return 0;
+		}
+}
+static struct spl_image_loader *spl_ll_find_loader(uint boot_device)
+{
+if (boot_device == entry->boot_device)
+}
+static int spl_load_image(struct spl_image_info *spl_image,
+			  struct spl_image_loader *loader)
+{
+ret = loader->load_image(spl_image, &bootdev);
+}
+void preloader_console_init(void)
+{
+#ifdef CONFIG_SPL_SERIAL
+	gd->baudrate = CONFIG_BAUDRATE;
+
+	serial_init();		/* serial communications setup */
+
+	gd->have_console = 1;
+
+#if CONFIG_IS_ENABLED(BANNER_PRINT)
+	puts("\nU-Boot " SPL_TPL_NAME " " PLAIN_VERSION " (" U_BOOT_DATE " - "
+	     U_BOOT_TIME " " U_BOOT_TZ ")\n");
+#endif
+#ifdef CONFIG_SPL_DISPLAY_PRINT
+	spl_display_print();
+#endif
+#endif
+}
+
+7、arch/arm/mach-rockchip/spl-boot-order.c
+static int spl_node_to_boot_device(int node)
+{
+	struct udevice *parent;
+
+	/*
+	 * This should eventually move into the SPL code, once SPL becomes
+	 * aware of the block-device layer.  Until then (and to avoid unneeded
+	 * delays in getting this feature out), it lives at the board-level.
+	 */
+	if (!uclass_get_device_by_of_offset(UCLASS_MMC, node, &parent)) {
+		struct udevice *dev;
+		struct blk_desc *desc = NULL;
+
+		for (device_find_first_child(parent, &dev);
+		     dev;
+		     device_find_next_child(&dev)) {
+			if (device_get_uclass_id(dev) == UCLASS_BLK) {
+				desc = dev_get_uclass_plat(dev);
+				break;
+			}
+		}
+
+		if (!desc)
+			return -ENOENT;
+
+		switch (desc->devnum) {
+		case 0:
+			return BOOT_DEVICE_MMC1;
+		case 1:
+			return BOOT_DEVICE_MMC2;
+		default:
+			return -ENOSYS;
+		}
+	} else if (!uclass_get_device_by_of_offset(UCLASS_SPI_FLASH, node,
+		&parent)) {
+		return BOOT_DEVICE_SPI;
+	}
+
+	/*
+	 * SPL doesn't differentiate SPI flashes, so we keep the detection
+	 * brief and inaccurate... hopefully, the common SPL layer can be
+	 * extended with awareness of the BLK layer (and matching OF_CONTROL)
+	 * soon.
+	 */
+	if (!uclass_get_device_by_of_offset(UCLASS_SPI_FLASH, node, &parent))
+		return BOOT_DEVICE_SPI;
+
+	return -1;
+}
+void board_boot_order(u32 *spl_boot_list)
+{
+	/* In case of no fdt (or only plat), use spl_boot_device() */
+	if (!CONFIG_IS_ENABLED(OF_CONTROL) || CONFIG_IS_ENABLED(OF_PLATDATA)) {
+		spl_boot_list[0] = spl_boot_device();
+		return;
+	}
+
+	const void *blob = gd->fdt_blob;
+	int chosen_node = fdt_path_offset(blob, "/chosen");
+	int idx = 0;
+	int elem;
+	int boot_device;
+	int node;
+	const char *conf;
+
+	if (chosen_node < 0) {
+		debug("%s: /chosen not found, using spl_boot_device()\n",
+		      __func__);
+		spl_boot_list[0] = spl_boot_device();
+		return;
+	}
+
+	for (elem = 0;
+	     (conf = fdt_stringlist_get(blob, chosen_node,
+					"u-boot,spl-boot-order", elem, NULL));
+	     elem++) {
+		const char *alias;
+
+		/* Handle the case of 'same device the SPL was loaded from' */
+		if (strncmp(conf, "same-as-spl", 11) == 0) {
+			conf = board_spl_was_booted_from();
+			if (!conf)
+				continue;
+		}
+
+		/* First check if the list element is an alias */
+		alias = fdt_get_alias(blob, conf);
+		if (alias)
+			conf = alias;
+
+		/* Try to resolve the config item (or alias) as a path */
+		node = fdt_path_offset(blob, conf);
+		if (node < 0) {
+			debug("%s: could not find %s in FDT\n", __func__, conf);
+			continue;
+		}
+
+		/* Try to map this back onto SPL boot devices */
+		boot_device = spl_node_to_boot_device(node);
+		if (boot_device < 0) {
+			debug("%s: could not map node @%x to a boot-device\n",
+			      __func__, node);
+			continue;
+		}
+
+		spl_boot_list[idx++] = boot_device;
+	}
+
+	/* If we had no matches, fall back to spl_boot_device */
+	if (idx == 0)
+		spl_boot_list[0] = spl_boot_device();
+}
+
+8、arch/arm/mach-rockchip/rk3288/rk3288.c
+const char * const boot_devices[BROM_LAST_BOOTSOURCE + 1] = {
+	[BROM_BOOTSOURCE_EMMC] = "/mmc@ff0f0000",
+	[BROM_BOOTSOURCE_SD] = "/mmc@ff0c0000",
+};
+
+9、common/spl/spl_mmc.c
+SPL_LOAD_IMAGE_METHOD("MMC1", 0, BOOT_DEVICE_MMC1, spl_mmc_load_image);
+SPL_LOAD_IMAGE_METHOD("MMC2", 0, BOOT_DEVICE_MMC2, spl_mmc_load_image);
+	#define CONFIG_SYS_MMCSD_RAW_MODE_U_BOOT_SECTOR 0x4000
+	-->spl_mmc_load
+		-->spl_mmc_boot_mode
+		-->mmc_load_image_raw_sector
+		-->mmc_load_legacy
+			-->spl_parse_image_header
+	-->exit
+
+10、include/spl.h
+#define SPL_LOAD_IMAGE_METHOD(_name, _priority, _boot_device, _method) \
+	SPL_LOAD_IMAGE(_boot_device ## _priority ## _method) = { \
+		.name = _name, \
+		.boot_device = _boot_device, \
+		.load_image = _method, \
+	}
+----------------uboot-------------------------------------------------------
+tpl/spl编译选项差异
+-CONFIG_SPL_BUILD
++CONFIG_DM_STDIO
+
+1、2和tpl相同
+
+3、common/board_f.c
+void board_init_f(ulong boot_flags)
+{
+	gd->flags = boot_flags;
+	gd->have_console = 0;
+
+	if (initcall_run_list(init_sequence_f))
+		hang();
+
+#if !defined(CONFIG_ARM) && !defined(CONFIG_SANDBOX) && \
+		!defined(CONFIG_EFI_APP) && !CONFIG_IS_ENABLED(X86_64) && \
+		!defined(CONFIG_ARC)
+	/* NOTREACHED - jump_to_copy() does not return */
+	hang();
+#endif
+
+	arch_cpu_init
+		-->rk3288_qos_init
+}
+
+static const init_fnc_t init_sequence_f[] = {
+	setup_mon_len,
+#ifdef CONFIG_OF_CONTROL
+	fdtdec_setup,
+#endif
+#ifdef CONFIG_TRACE_EARLY
+	trace_early_init,
+#endif
+	initf_malloc,
+	log_init,
+	initf_bootstage,	/* uses its own timer, so does not need DM */
+	cyclic_init,
+	event_init,
+#ifdef CONFIG_BLOBLIST
+	bloblist_init,
+#endif
+	setup_spl_handoff,
+#if defined(CONFIG_CONSOLE_RECORD_INIT_F)
+	console_record_init,
+#endif
+#if defined(CONFIG_HAVE_FSP)
+	arch_fsp_init,
+#endif
+	arch_cpu_init,		/* basic arch cpu dependent setup */
+	mach_cpu_init,		/* SoC/machine dependent CPU setup */
+	initf_dm,
+#if defined(CONFIG_BOARD_EARLY_INIT_F)
+	board_early_init_f,
+#endif
+#if defined(CONFIG_PPC) || defined(CONFIG_SYS_FSL_CLK) || defined(CONFIG_M68K)
+	/* get CPU and bus clocks according to the environment variable */
+	get_clocks,		/* get CPU and bus clocks (etc.) */
+#endif
+#if !defined(CONFIG_M68K)
+	timer_init,		/* initialize timer */
+#endif
+#if defined(CONFIG_BOARD_POSTCLK_INIT)
+	board_postclk_init,
+#endif
+	env_init,		/* initialize environment */
+	init_baud_rate,		/* initialze baudrate settings */
+	serial_init,		/* serial communications setup */
+	console_init_f,		/* stage 1 init of console */
+	display_options,	/* say that we are here */
+	display_text_info,	/* show debugging info if required */
+	checkcpu,
+#if defined(CONFIG_SYSRESET)
+	print_resetinfo,
+#endif
+#if defined(CONFIG_DISPLAY_CPUINFO)
+	print_cpuinfo,		/* display cpu info (and speed) */
+#endif
+#if defined(CONFIG_DTB_RESELECT)
+	embedded_dtb_select,
+#endif
+#if defined(CONFIG_DISPLAY_BOARDINFO)
+	show_board_info,
+#endif
+	INIT_FUNC_WATCHDOG_INIT
+	misc_init_f,
+	INIT_FUNC_WATCHDOG_RESET
+#if CONFIG_IS_ENABLED(SYS_I2C_LEGACY)
+	init_func_i2c,
+#endif
+#if defined(CONFIG_VID) && !defined(CONFIG_SPL)
+	init_func_vid,
+#endif
+	announce_dram_init,
+	dram_init,		/* configure available RAM banks */
+#ifdef CONFIG_POST
+	post_init_f,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#if defined(CONFIG_SYS_DRAM_TEST)
+	testdram,
+#endif /* CONFIG_SYS_DRAM_TEST */
+	INIT_FUNC_WATCHDOG_RESET
+
+#ifdef CONFIG_POST
+	init_post,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+	/*
+	 * Now that we have DRAM mapped and working, we can
+	 * relocate the code and continue running from DRAM.
+	 *
+	 * Reserve memory at end of RAM for (top down in that order):
+	 *  - area that won't get touched by U-Boot and Linux (optional)
+	 *  - kernel log buffer
+	 *  - protected RAM
+	 *  - LCD framebuffer
+	 *  - monitor code
+	 *  - board info struct
+	 */
+	setup_dest_addr,
+#ifdef CONFIG_OF_BOARD_FIXUP
+	fix_fdt,
+#endif
+#ifdef CONFIG_PRAM
+	reserve_pram,
+#endif
+	reserve_round_4k,
+	arch_reserve_mmu,
+	reserve_video,
+	reserve_trace,
+	reserve_uboot,
+	reserve_malloc,
+	reserve_board,
+	reserve_global_data,
+	reserve_fdt,
+	reserve_bootstage,
+	reserve_bloblist,
+	reserve_arch,
+	reserve_stacks,
+	dram_init_banksize,
+	show_dram_config,
+	INIT_FUNC_WATCHDOG_RESET
+	setup_bdinfo,
+	display_new_sp,
+	INIT_FUNC_WATCHDOG_RESET
+	reloc_fdt,
+	reloc_bootstage,
+	reloc_bloblist,
+	setup_reloc,
+#if defined(CONFIG_X86) || defined(CONFIG_ARC)
+	copy_uboot_to_ram,
+	do_elf_reloc_fixups,
+#endif
+	clear_bss,
+#if !defined(CONFIG_ARM) && !defined(CONFIG_SANDBOX) && \
+		!CONFIG_IS_ENABLED(X86_64)
+	jump_to_copy,
+#endif
+	NULL,
+};
+
+4、common/board_r.c
+void board_init_r(gd_t *new_gd, ulong dest_addr)
+{
+	/*
+	 * Set up the new global data pointer. So far only x86 does this
+	 * here.
+	 * TODO(sjg@chromium.org): Consider doing this for all archs, or
+	 * dropping the new_gd parameter.
+	 */
+	if (CONFIG_IS_ENABLED(X86_64) && !IS_ENABLED(CONFIG_EFI_APP))
+		arch_setup_gd(new_gd);
+
+#if !defined(CONFIG_X86) && !defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
+	gd = new_gd;
+#endif
+	gd->flags &= ~GD_FLG_LOG_READY;
+
+	if (IS_ENABLED(CONFIG_NEEDS_MANUAL_RELOC)) {
+		for (int i = 0; i < ARRAY_SIZE(init_sequence_r); i++)
+			MANUAL_RELOC(init_sequence_r[i]);
+	}
+
+	if (initcall_run_list(init_sequence_r))
+		hang();
+
+	/* NOTREACHED - run_main_loop() does not return */
+	hang();
+}
+
+static init_fnc_t init_sequence_r[] = {
+	initr_trace,
+	initr_reloc,
+	event_init,
+	/* TODO: could x86/PPC have this also perhaps? */
+#if defined(CONFIG_ARM) || defined(CONFIG_RISCV)
+	initr_caches,
+	/* Note: For Freescale LS2 SoCs, new MMU table is created in DDR.
+	 *	 A temporary mapping of IFC high region is since removed,
+	 *	 so environmental variables in NOR flash is not available
+	 *	 until board_init() is called below to remap IFC to high
+	 *	 region.
+	 */
+#endif
+	initr_reloc_global_data,
+#if CONFIG_IS_ENABLED(NEEDS_MANUAL_RELOC) && CONFIG_IS_ENABLED(EVENT)
+	event_manual_reloc,
+#endif
+#if defined(CONFIG_SYS_INIT_RAM_LOCK) && defined(CONFIG_E500)
+	initr_unlock_ram_in_cache,
+#endif
+	initr_barrier,
+	initr_malloc,
+	cyclic_init,
+	log_init,
+	initr_bootstage,	/* Needs malloc() but has its own timer */
+#if defined(CONFIG_CONSOLE_RECORD)
+	console_record_init,
+#endif
+#ifdef CONFIG_SYS_NONCACHED_MEMORY
+	noncached_init,
+#endif
+	initr_of_live,
+#ifdef CONFIG_DM
+	initr_dm,
+#endif
+#ifdef CONFIG_ADDR_MAP
+	init_addr_map,
+#endif
+#if defined(CONFIG_ARM) || defined(CONFIG_RISCV) || defined(CONFIG_SANDBOX)
+	board_init,	/* Setup chipselects */
+#endif
+	/*
+	 * TODO: printing of the clock inforamtion of the board is now
+	 * implemented as part of bdinfo command. Currently only support for
+	 * davinci SOC's is added. Remove this check once all the board
+	 * implement this.
+	 */
+#ifdef CONFIG_CLOCKS
+	set_cpu_clk_info, /* Setup clock information */
+#endif
+#ifdef CONFIG_EFI_LOADER
+	efi_memory_init,
+#endif
+	initr_binman,
+#ifdef CONFIG_FSP_VERSION2
+	arch_fsp_init_r,
+#endif
+	initr_dm_devices,
+	stdio_init_tables,
+	serial_initialize,
+	initr_announce,
+	dm_announce,
+#if CONFIG_IS_ENABLED(WDT)
+	initr_watchdog,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#if defined(CONFIG_NEEDS_MANUAL_RELOC) && defined(CONFIG_BLOCK_CACHE)
+	blkcache_init,
+#endif
+#ifdef CONFIG_NEEDS_MANUAL_RELOC
+	initr_manual_reloc_cmdtable,
+#endif
+	arch_initr_trap,
+#if defined(CONFIG_BOARD_EARLY_INIT_R)
+	board_early_init_r,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#ifdef CONFIG_POST
+	post_output_backlog,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#if defined(CONFIG_PCI_INIT_R) && defined(CONFIG_SYS_EARLY_PCI_INIT)
+	/*
+	 * Do early PCI configuration _before_ the flash gets initialised,
+	 * because PCU resources are crucial for flash access on some boards.
+	 */
+	pci_init,
+#endif
+#ifdef CONFIG_ARCH_EARLY_INIT_R
+	arch_early_init_r,
+#endif
+	power_init_board,
+#ifdef CONFIG_MTD_NOR_FLASH
+	initr_flash,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#if defined(CONFIG_PPC) || defined(CONFIG_M68K) || defined(CONFIG_X86)
+	/* initialize higher level parts of CPU like time base and timers */
+	cpu_init_r,
+#endif
+#ifdef CONFIG_EFI_SETUP_EARLY
+	efi_init_early,
+#endif
+#ifdef CONFIG_CMD_NAND
+	initr_nand,
+#endif
+#ifdef CONFIG_CMD_ONENAND
+	initr_onenand,
+#endif
+#ifdef CONFIG_MMC
+	initr_mmc,
+#endif
+#ifdef CONFIG_XEN
+	xen_init,
+#endif
+#ifdef CONFIG_PVBLOCK
+	initr_pvblock,
+#endif
+	initr_env,
+#ifdef CONFIG_SYS_MALLOC_BOOTPARAMS
+	initr_malloc_bootparams,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+	cpu_secondary_init_r,
+#if defined(CONFIG_ID_EEPROM)
+	mac_read_from_eeprom,
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#if defined(CONFIG_PCI_INIT_R) && !defined(CONFIG_SYS_EARLY_PCI_INIT)
+	/*
+	 * Do pci configuration
+	 */
+	pci_init,
+#endif
+	stdio_add_devices,
+	jumptable_init,
+#ifdef CONFIG_API
+	api_init,
+#endif
+	console_init_r,		/* fully init console as a device */
+#ifdef CONFIG_DISPLAY_BOARDINFO_LATE
+	console_announce_r,
+	show_board_info,
+#endif
+#ifdef CONFIG_ARCH_MISC_INIT
+	arch_misc_init,		/* miscellaneous arch-dependent init */
+#endif
+#ifdef CONFIG_MISC_INIT_R
+	misc_init_r,		/* miscellaneous platform-dependent init */
+#endif
+	INIT_FUNC_WATCHDOG_RESET
+#ifdef CONFIG_CMD_KGDB
+	kgdb_init,
+#endif
+	interrupt_init,
+#if defined(CONFIG_MICROBLAZE) || defined(CONFIG_M68K)
+	timer_init,		/* initialize timer */
+#endif
+#if defined(CONFIG_LED_STATUS)
+	initr_status_led,
+#endif
+	/* PPC has a udelay(20) here dating from 2002. Why? */
+#if defined(CONFIG_GPIO_HOG)
+	gpio_hog_probe_all,
+#endif
+#ifdef CONFIG_BOARD_LATE_INIT
+	board_late_init,
+#endif
+#if defined(CONFIG_SCSI) && !defined(CONFIG_DM_SCSI)
+	INIT_FUNC_WATCHDOG_RESET
+	initr_scsi,
+#endif
+#ifdef CONFIG_BITBANGMII
+	bb_miiphy_init,
+#endif
+#ifdef CONFIG_PCI_ENDPOINT
+	pci_ep_init,
+#endif
+#ifdef CONFIG_CMD_NET
+	INIT_FUNC_WATCHDOG_RESET
+	initr_net,
+#endif
+#ifdef CONFIG_POST
+	initr_post,
+#endif
+#if defined(CONFIG_IDE) && !defined(CONFIG_BLK)
+	initr_ide,
+#endif
+#ifdef CONFIG_LAST_STAGE_INIT
+	INIT_FUNC_WATCHDOG_RESET
+	/*
+	 * Some parts can be only initialized if all others (like
+	 * Interrupts) are up and running (i.e. the PC-style ISA
+	 * keyboard).
+	 */
+	last_stage_init,
+#endif
+#if defined(CONFIG_PRAM)
+	initr_mem,
+#endif
+	run_main_loop,
+};
+
+static int run_main_loop(void)
+{
+#ifdef CONFIG_SANDBOX
+	sandbox_main_loop_init();
+#endif
+	/* main_loop() can return to retry autoboot, if so just run it again */
+	for (;;)
+		main_loop();
+	return 0;
+}
+
+5、common/main.c
+/* We come here after U-Boot is initialised and ready to process commands */
+void main_loop(void)
+{
+	const char *s;
+
+	bootstage_mark_name(BOOTSTAGE_ID_MAIN_LOOP, "main_loop");
+
+	if (IS_ENABLED(CONFIG_VERSION_VARIABLE))
+		env_set("ver", version_string);  /* set version variable */
+
+	cli_init();
+
+	if (IS_ENABLED(CONFIG_USE_PREBOOT))
+		run_preboot_environment_command();
+
+	if (IS_ENABLED(CONFIG_UPDATE_TFTP))
+		update_tftp(0UL, NULL, NULL);
+
+	if (IS_ENABLED(CONFIG_EFI_CAPSULE_ON_DISK_EARLY)) {
+		/* efi_init_early() already called */
+		if (efi_init_obj_list() == EFI_SUCCESS)
+			efi_launch_capsules();
+	}
+
+	s = bootdelay_process();
+	if (cli_process_fdt(&s))
+		cli_secure_boot_cmd(s);
+
+	autoboot_command(s);
+
+	cli_loop();
+	panic("No CLI available");
+}
+
+6、drivers/clk/rockchip/clk_rk3288.c
+static int rk3288_clk_probe(struct udevice *dev)
+{
+初始化clk
+rkclk_init(priv->cru, priv->grf);
+}

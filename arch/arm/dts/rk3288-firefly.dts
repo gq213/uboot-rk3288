@@ -12,32 +12,20 @@
 
 	chosen {
 		stdout-path = &uart2;
+		u-boot,spl-boot-order = \
+			"same-as-spl", &sdmmc, &emmc;
 	};
 };
 
-&ir {
-	gpios = <&gpio7 0 GPIO_ACTIVE_LOW>;
+&vopb {
+	status = "disabled";
 };
 
-&pinctrl {
-	act8846 {
-		pmic_vsel: pmic-vsel {
-			rockchip,pins = <7 14 RK_FUNC_GPIO &pcfg_output_low>;
-		};
-	};
-
-	ir {
-		ir_int: ir-int {
-			rockchip,pins = <7 0 RK_FUNC_GPIO &pcfg_pull_up>;
-		};
-	};
-	usb_host {
-		host_vbus_drv: host-vbus-drv {
-			rockchip,pins = <0 14 RK_FUNC_GPIO &pcfg_pull_none>;
-		};
-	};
+&hdmi {
+	ddc-i2c-bus = <&i2c5>;
+	status = "disabled";
 };
 
-&pwm1 {
-	status = "okay";
+&i2c5 {
+	status = "disabled";
 };

@@ -33,12 +33,24 @@
 /* Linux fails to load the fdt if it's loaded above 256M on a Rock 2 board, so
  * limit the fdt reallocation to that */
 #define CONFIG_EXTRA_ENV_SETTINGS \
+	"bootk=" \
+		"tftpboot 0x02008000 zImage;" \
+		"tftpboot 0x08300000 rk3288-firefly.dtb;" \
+		"bootz 0x02008000 - 0x08300000\0" \
+	"mmcboot=" \
+		"fatload mmc 1:2 0x02008000 zImage;" \
+		"fatload mmc 1:2 0x08300000 rk3288-firefly.dtb;" \
+		"bootz 0x02008000 - 0x08300000\0" \
+	"ethaddr=00:26:22:D9:FA:25\0" \
 	"fdt_high=0x0fffffff\0" \
 	"initrd_high=0x0fffffff\0" \
 	"fdtfile=" CONFIG_DEFAULT_FDT_FILE "\0" \
-	"partitions=" PARTS_DEFAULT \
 	ENV_MEM_LAYOUT_SETTINGS \
-	ROCKCHIP_DEVICE_SETTINGS \
-	BOOTENV
+	ROCKCHIP_DEVICE_SETTINGS
+
+#define CONFIG_NETMASK		255.255.255.0
+#define CONFIG_IPADDR		192.168.2.11
+#define CONFIG_SERVERIP		192.168.2.125
+#define CONFIG_GATEWAYIP	192.168.2.1
 
 #endif
