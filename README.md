@@ -17,11 +17,19 @@ sudo dd if=idbloader.img of=/dev/sdb seek=64 bs=512
 sudo dd if=u-boot.img of=/dev/sdb seek=16384 bs=512
 
 
-3、kernel和dtb加载
+3、kernel、dtb和rootfs加载
 
-默认从Micro SD卡的第2分区加载，如果想默认从tftp加载
+默认从Micro SD卡加载。
+
+如果想默认从tftp加载kernel、dtb：
 
 setenv bootcmd "run bootk"
+
+saveenv
+
+如果想默认从tftp加载kernel、dtb和rootfs：
+
+setenv bootcmd "run bootr"
 
 saveenv
 

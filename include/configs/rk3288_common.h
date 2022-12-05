@@ -33,6 +33,9 @@
 /* Linux fails to load the fdt if it's loaded above 256M on a Rock 2 board, so
  * limit the fdt reallocation to that */
 #define CONFIG_EXTRA_ENV_SETTINGS \
+	"bootr=" \
+		"tftpboot 0x04000000 rootfs.squashfs;" \
+		"run bootk\0" \
 	"bootk=" \
 		"tftpboot 0x02008000 zImage;" \
 		"tftpboot 0x08300000 rk3288-firefly.dtb;" \
