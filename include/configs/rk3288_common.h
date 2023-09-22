@@ -40,11 +40,17 @@
 		"tftpboot 0x02008000 zImage;" \
 		"tftpboot 0x08300000 rk3288-firefly.dtb;" \
 		"bootz 0x02008000 - 0x08300000\0" \
+	"mmcdev="__stringify(CONFIG_SYS_MMC_ENV_DEV)"\0" \
+	"mmcpart=2\0" \
+	"mmcbootr=" \
+		"fatload mmc ${mmcdev}:${mmcpart} 0x04000000 rootfs.squashfs;" \
+		"run mmcboot\0" \
 	"mmcboot=" \
-		"fatload mmc 1:2 0x02008000 zImage;" \
-		"fatload mmc 1:2 0x08300000 rk3288-firefly.dtb;" \
+		"fatload mmc ${mmcdev}:${mmcpart} 0x02008000 zImage;" \
+		"fatload mmc ${mmcdev}:${mmcpart} 0x08300000 rk3288-firefly.dtb;" \
 		"bootz 0x02008000 - 0x08300000\0" \
 	"ethaddr=00:26:22:D9:FA:25\0" \
+	"tftptimeout=0\0" \
 	"fdt_high=0x0fffffff\0" \
 	"initrd_high=0x0fffffff\0" \
 	"fdtfile=" CONFIG_DEFAULT_FDT_FILE "\0" \
