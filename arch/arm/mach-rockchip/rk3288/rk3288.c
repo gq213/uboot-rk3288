@@ -122,6 +122,8 @@ static int ft_rk3288w_setup(void *blob)
 	const char *path;
 	int offs, ret;
 
+	printf("%s\n", __func__);
+
 	path = "/clock-controller@ff760000";
 	offs = fdt_path_offset(blob, path);
 	if (offs < 0) {
